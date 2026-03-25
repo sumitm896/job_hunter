@@ -8,6 +8,7 @@ import smtplib
 import json
 import os
 import re
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timezone
@@ -55,101 +56,142 @@ SEARCH_QUERIES = [
     ["Technical Account Manager Ireland remote", "IT Service Management Consultant Ireland"],
 ]
 
-def build_prompt():
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+def safe_request(client, **kwargs):
+    """Retry wrapper for handling rate limits"""
+    for attempt in range(5):
+        try:
+            return client.messages.create(**kwargs)
+        except Exception as e:
+            if "429" in str(e):
+                wait = 20 * (attempt + 1)
+                print(f"[RATE LIMIT] Waiting {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
+    raise Exception("Max retries exceeded")
+
+
+def build_prompt(job_count=2):
     roles_str = ", ".join(PROFILE["target_roles"])
     skills_str = ", ".join(PROFILE["key_skills"])
 
-    return f"""Find 10 current {roles_str} job openings in {PROFILE['location']}. 
-Candidate: {PROFILE['name']}, {PROFILE['experience_years']} years at Freshworks, {PROFILE['education']}.
-Key skills: {skills_str}.
+    return f"""Find {job_count} current {roles_str} job openings in {PROFILE['location']}.
 
-Output exactly 10 jobs in a JSON array. For each:
-- rank (int), company, title, location, url, salary, match_score (0-100)
-- match_reasons (list of 3 strings)
-- cv_keywords (list of 3 strings)
-- outreach_message (50 words)
-- cover_letter_hook (2 sentences)
-- priority (HIGH/MEDIUM/LOW)
+Candidate: {PROFILE['experience_years']} years SaaS experience. Skills: {skills_str}.
 
-If data is missing, use "N/A"."""
+Return ONLY valid JSON:
+- No explanation
+- No markdown
+- Must start with [ and end with ]
+
+Each job must include:
+rank, company, title, location, url, salary, match_score,
+match_reasons (3), cv_keywords (3), outreach_message, cover_letter_hook, priority.
+"""
+
+
+# ── Core Logic ─────────────────────────────────────────────────────────────
 
 def search_jobs():
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    model_id = "claude-sonnet-4-20250514"
+
     day_index = datetime.now(timezone.utc).weekday()
     queries = SEARCH_QUERIES[day_index % len(SEARCH_QUERIES)]
 
-    print(f"[{TODAY}] Starting search: {queries}")
+    print(f"[{TODAY}] Starting search...")
 
-    # As requested: claude-sonnet-4-20250514
-    model_id = "claude-sonnet-4-20250514" 
+    all_jobs = []
 
-    system_prompt = (
-        "You are a professional job-search assistant. "
-        "Search the web and return 10 jobs as a JSON array. "
-        "Do not include any intro, outro, or conversational text. "
-        "Output ONLY the raw JSON array."
-    )
+    for i, query in enumerate(queries):
+        print(f"[SEARCH {i+1}] {query}")
 
-    response = client.messages.create(
-        model=model_id,
-        max_tokens=8000,
-        system=system_prompt,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[
-            {"role": "user", "content": build_prompt()},
-            {"role": "assistant", "content": "["} 
-        ],
-    )
+        response = safe_request(
+            client,
+            model=model_id,
+            max_tokens=1200,
+            system=(
+                "You are a professional job-search assistant. "
+                "Use web search. Return ONLY raw JSON array."
+            ),
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": build_prompt(job_count=2) + f"\nSearch query: {query}"
+                }
+            ],
+        )
 
-    # Combine pre-filled bracket with text
-    full_text = "[" 
-    for block in response.content:
-        if hasattr(block, "text"):
-            full_text += block.text
+        # Extract only text blocks
+        full_text = "".join(
+            block.text for block in response.content
+            if getattr(block, "type", "") == "text"
+        )
 
-    return full_text
+        jobs = parse_jobs(full_text)
+        all_jobs.extend(jobs)
+
+        # Prevent hitting TPM limits
+        time.sleep(20)
+
+    return all_jobs[:10]
+
 
 def parse_jobs(raw_text):
-    """
-    Robust parser using raw_decode to stop exactly when the JSON ends, 
-    ignoring any 'Extra data' Claude might have added.
-    """
+    """Robust JSON parser"""
     try:
-        # 1. Basic cleanup
         text = raw_text.strip()
         text = re.sub(r"```json\s*", "", text)
-        text = re.sub(r"```\s*", "", text)
+        text = re.sub(r"```", "", text)
 
-        # 2. Find the first bracket
-        start_idx = text.find("[")
-        if start_idx == -1:
-            raise ValueError("No opening bracket found")
-        
-        # 3. Use JSONDecoder to find the valid JSON object/array
-        # This will ignore any text that comes AFTER the closing bracket
+        start_candidates = [i for i in [text.find("["), text.find("{")] if i != -1]
+        if not start_candidates:
+            raise ValueError("No JSON start found")
+
+        start_idx = min(start_candidates)
+
         decoder = json.JSONDecoder()
-        jobs, index = decoder.raw_decode(text[start_idx:])
-        
-        if not isinstance(jobs, list):
+        parsed, _ = decoder.raw_decode(text[start_idx:])
+
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+
+        if not isinstance(parsed, list):
             return []
 
-        # 4. Normalize data
-        for job in jobs:
-            if "match_score" not in job: job["match_score"] = 0
-            if "company" not in job: job["company"] = "Unknown"
-            if "title" not in job: job["title"] = "Job Link"
-            if "priority" not in job:
+        cleaned = []
+        for job in parsed:
+            if not isinstance(job, dict):
+                continue
+
+            job.setdefault("match_score", 0)
+            job.setdefault("company", "Unknown")
+            job.setdefault("title", "Job Link")
+
+            try:
                 s = int(job.get("match_score", 0))
-                job["priority"] = "HIGH" if s >= 85 else "MEDIUM" if s >= 75 else "LOW"
-            
-        print(f"[SUCCESS] Parsed {len(jobs)} jobs.")
-        return jobs
+            except:
+                s = 0
+
+            job["priority"] = (
+                "HIGH" if s >= 85 else "MEDIUM" if s >= 75 else "LOW"
+            )
+
+            cleaned.append(job)
+
+        print(f"[SUCCESS] Parsed {len(cleaned)} jobs.")
+        return cleaned
 
     except Exception as e:
         print(f"[ERROR] Parsing failed: {e}")
-        # Print a snippet of the end of the text to see what caused the "Extra data"
-        print(f"[DEBUG] End of response: ...{raw_text[-100:]}")
+        print(f"[DEBUG] Raw tail: ...{raw_text[-200:]}")
         return []
+
+
+# ── Email ──────────────────────────────────────────────────────────────────
 
 def build_email_html(jobs):
     def score_color(score):
@@ -158,7 +200,8 @@ def build_email_html(jobs):
             if s >= 85: return "#16a34a"
             if s >= 75: return "#ca8a04"
             return "#dc2626"
-        except: return "#6b7280"
+        except:
+            return "#6b7280"
 
     job_cards = ""
     for job in jobs:
@@ -182,15 +225,17 @@ def build_email_html(jobs):
     return f"""
     <html>
     <body style="font-family:sans-serif;background:#f9fafb;padding:20px;">
-      <table width="100%" max-width="600px" style="background:#ffffff;border-radius:12px;margin:auto;border:1px solid #e5e7eb;overflow:hidden;">
+      <table width="100%" style="max-width:600px;background:#ffffff;border-radius:12px;margin:auto;border:1px solid #e5e7eb;">
         <tr><td style="background:#1e3a5f;padding:30px;color:#ffffff;text-align:center;">
-            <h1 style="margin:0;font-size:22px;">Daily Job Digest</h1>
-            <p style="margin:5px 0 0 0;font-size:14px;opacity:0.8;">{TODAY}</p>
+            <h1 style="margin:0;">Daily Job Digest</h1>
+            <p style="margin:5px 0;">{TODAY}</p>
         </td></tr>
         {job_cards}
       </table>
     </body>
-    </html>"""
+    </html>
+    """
+
 
 def send_email(html_body, job_count):
     msg = MIMEMultipart("alternative")
@@ -202,25 +247,31 @@ def send_email(html_body, job_count):
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
         server.sendmail(GMAIL_ADDRESS, RECIPIENT_EMAIL, msg.as_string())
+
     print(f"[SUCCESS] Email sent to {RECIPIENT_EMAIL}")
+
+
+# ── Main ───────────────────────────────────────────────────────────────────
 
 def main():
     try:
-        raw_response = search_jobs()
-        jobs = parse_jobs(raw_response)
+        jobs = search_jobs()
 
         if not jobs:
-            print("[WARN] No jobs parsed.")
+            print("[WARN] No jobs found.")
             return
 
         jobs.sort(key=lambda x: x.get("match_score", 0), reverse=True)
+
         html = build_email_html(jobs)
         send_email(html, len(jobs))
+
         print("Done.")
 
     except Exception as e:
         print(f"[FATAL] {e}")
         raise
+
 
 if __name__ == "__main__":
     main()
