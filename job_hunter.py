@@ -59,7 +59,7 @@ SEARCH_QUERIES = [
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def safe_request(client, **kwargs):
-    """Retry wrapper for handling rate limits"""
+    """Retry wrapper for rate limits"""
     for attempt in range(5):
         try:
             return client.messages.create(**kwargs)
@@ -73,7 +73,7 @@ def safe_request(client, **kwargs):
     raise Exception("Max retries exceeded")
 
 
-def build_prompt(job_count=2):
+def build_prompt(job_count=4):
     roles_str = ", ".join(PROFILE["target_roles"])
     skills_str = ", ".join(PROFILE["key_skills"])
 
@@ -99,28 +99,32 @@ def search_jobs():
     model_id = "claude-sonnet-4-20250514"
 
     day_index = datetime.now(timezone.utc).weekday()
-    queries = SEARCH_QUERIES[day_index % len(SEARCH_QUERIES)]
+    base_queries = SEARCH_QUERIES[day_index % len(SEARCH_QUERIES)]
+
+    # 🔥 Expand queries for better coverage
+    queries = base_queries * 2  # now 4 queries instead of 2
 
     print(f"[{TODAY}] Starting search...")
 
     all_jobs = []
+    target_jobs = 10
 
     for i, query in enumerate(queries):
+        if len(all_jobs) >= target_jobs:
+            break
+
         print(f"[SEARCH {i+1}] {query}")
 
         response = safe_request(
             client,
             model=model_id,
             max_tokens=1200,
-            system=(
-                "You are a professional job-search assistant. "
-                "Use web search. Return ONLY raw JSON array."
-            ),
+            system="Use web search. Return ONLY JSON array.",
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[
                 {
                     "role": "user",
-                    "content": build_prompt(job_count=2) + f"\nSearch query: {query}"
+                    "content": build_prompt(job_count=4) + f"\nSearch query: {query}"
                 }
             ],
         )
@@ -132,12 +136,19 @@ def search_jobs():
         )
 
         jobs = parse_jobs(full_text)
-        all_jobs.extend(jobs)
 
-        # Prevent hitting TPM limits
+        # ✅ Deduplicate by URL
+        existing_urls = {j.get("url") for j in all_jobs}
+        new_jobs = [j for j in jobs if j.get("url") not in existing_urls]
+
+        all_jobs.extend(new_jobs)
+
+        print(f"[INFO] Total jobs so far: {len(all_jobs)}")
+
+        # Prevent rate limit
         time.sleep(20)
 
-    return all_jobs[:10]
+    return all_jobs[:target_jobs]
 
 
 def parse_jobs(raw_text):
