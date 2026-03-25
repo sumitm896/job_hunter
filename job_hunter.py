@@ -92,7 +92,7 @@ def search_jobs():
 
     # Note: We use the 'assistant' pre-fill strategy here
     response = client.messages.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-20250514",
         max_tokens=8000,
         system=system_prompt,
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
