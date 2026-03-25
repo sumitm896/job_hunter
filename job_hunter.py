@@ -59,25 +59,21 @@ SEARCH_QUERIES = [
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def safe_request(client, **kwargs):
-    """Handles rate limits (429) and overload (529) with retries"""
-    for attempt in range(6):
+    """Retry wrapper for handling rate limits"""
+    for attempt in range(5):
         try:
             return client.messages.create(**kwargs)
-
         except Exception as e:
-            error_str = str(e)
-
-            if "429" in error_str or "529" in error_str:
+            if "429" in str(e):
                 wait = 20 * (attempt + 1)
-                print(f"[RETRY] Waiting {wait}s due to rate/overload...")
+                print(f"[RATE LIMIT] Waiting {wait}s...")
                 time.sleep(wait)
             else:
                 raise
-
     raise Exception("Max retries exceeded")
 
 
-def build_prompt(job_count=4):
+def build_prompt(job_count=2):
     roles_str = ", ".join(PROFILE["target_roles"])
     skills_str = ", ".join(PROFILE["key_skills"])
 
@@ -98,33 +94,67 @@ match_reasons (3), cv_keywords (3), outreach_message, cover_letter_hook, priorit
 
 # ── Core Logic ─────────────────────────────────────────────────────────────
 
+def search_jobs():
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    model_id = "claude-sonnet-4-20250514"
+
+    day_index = datetime.now(timezone.utc).weekday()
+    queries = SEARCH_QUERIES[day_index % len(SEARCH_QUERIES)]
+
+    print(f"[{TODAY}] Starting search...")
+
+    all_jobs = []
+
+    for i, query in enumerate(queries):
+        print(f"[SEARCH {i+1}] {query}")
+
+        response = safe_request(
+            client,
+            model=model_id,
+            max_tokens=1200,
+            system=(
+                "You are a professional job-search assistant. "
+                "Use web search. Return ONLY raw JSON array."
+            ),
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": build_prompt(job_count=2) + f"\nSearch query: {query}"
+                }
+            ],
+        )
+
+        # Extract only text blocks
+        full_text = "".join(
+            block.text for block in response.content
+            if getattr(block, "type", "") == "text"
+        )
+
+        jobs = parse_jobs(full_text)
+        all_jobs.extend(jobs)
+
+        # Prevent hitting TPM limits
+        time.sleep(20)
+
+    return all_jobs[:10]
+
+
 def parse_jobs(raw_text):
-    """Robust JSON parser with recovery"""
+    """Robust JSON parser"""
     try:
         text = raw_text.strip()
         text = re.sub(r"```json\s*", "", text)
         text = re.sub(r"```", "", text)
 
-        # Find JSON start
         start_candidates = [i for i in [text.find("["), text.find("{")] if i != -1]
         if not start_candidates:
             raise ValueError("No JSON start found")
 
         start_idx = min(start_candidates)
-        text = text[start_idx:]
 
         decoder = json.JSONDecoder()
-
-        try:
-            parsed, _ = decoder.raw_decode(text)
-        except json.JSONDecodeError:
-            # Trim to last valid bracket
-            last_bracket = text.rfind("]")
-            if last_bracket != -1:
-                text = text[:last_bracket + 1]
-                parsed = json.loads(text)
-            else:
-                raise
+        parsed, _ = decoder.raw_decode(text[start_idx:])
 
         if isinstance(parsed, dict):
             parsed = [parsed]
@@ -150,9 +180,6 @@ def parse_jobs(raw_text):
                 "HIGH" if s >= 85 else "MEDIUM" if s >= 75 else "LOW"
             )
 
-            if not job.get("title") or not job.get("url"):
-                continue
-
             cleaned.append(job)
 
         print(f"[SUCCESS] Parsed {len(cleaned)} jobs.")
@@ -162,85 +189,6 @@ def parse_jobs(raw_text):
         print(f"[ERROR] Parsing failed: {e}")
         print(f"[DEBUG] Raw tail: ...{raw_text[-200:]}")
         return []
-
-
-def search_jobs():
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    model_id = "claude-sonnet-4-20250514"
-
-    day_index = datetime.now(timezone.utc).weekday()
-    base_queries = SEARCH_QUERIES[day_index % len(SEARCH_QUERIES)]
-    queries = base_queries * 2  # expand coverage
-
-    print(f"[{TODAY}] Starting search...")
-
-    all_jobs = []
-    target_jobs = 10
-
-    for i, query in enumerate(queries):
-        if len(all_jobs) >= target_jobs:
-            break
-
-        print(f"[SEARCH {i+1}] {query}")
-
-        response = safe_request(
-            client,
-            model=model_id,
-            max_tokens=1600,
-            system="Use web search. Return ONLY JSON array.",
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[
-                {
-                    "role": "user",
-                    "content": build_prompt(job_count=4) + f"\nSearch query: {query}"
-                }
-            ],
-        )
-
-        full_text = "".join(
-            block.text for block in response.content
-            if getattr(block, "type", "") == "text"
-        )
-
-        jobs = parse_jobs(full_text)
-
-        # Retry if bad response
-        if len(jobs) < 2:
-            print("[RETRY] Bad response, retrying query...")
-            time.sleep(10)
-
-            response = safe_request(
-                client,
-                model=model_id,
-                max_tokens=1600,
-                system="Use web search. Return ONLY JSON array.",
-                tools=[{"type": "web_search_20250305", "name": "web_search"}],
-                messages=[
-                    {
-                        "role": "user",
-                        "content": build_prompt(job_count=4) + f"\nSearch query: {query}"
-                    }
-                ],
-            )
-
-            full_text = "".join(
-                block.text for block in response.content
-                if getattr(block, "type", "") == "text"
-            )
-
-            jobs = parse_jobs(full_text)
-
-        # Deduplicate
-        existing_urls = {j.get("url") for j in all_jobs}
-        new_jobs = [j for j in jobs if j.get("url") not in existing_urls]
-
-        all_jobs.extend(new_jobs)
-
-        print(f"[INFO] Total jobs so far: {len(all_jobs)}")
-
-        time.sleep(20)
-
-    return all_jobs[:target_jobs]
 
 
 # ── Email ──────────────────────────────────────────────────────────────────
