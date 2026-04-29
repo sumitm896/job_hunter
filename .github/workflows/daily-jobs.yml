@@ -1,12 +1,11 @@
 name: Daily Job Hunter
-
 on:
   schedule:
     # 8:00 AM Dublin time (UTC+0 in winter, UTC+1 in summer)
     # Using 7:00 UTC to hit ~8 AM Irish time during summer (IST)
     # Adjust to 8:00 UTC during winter (GMT) if needed
     - cron: '0 7 * * *'
-  
+
   # Allow manual trigger from GitHub UI
   workflow_dispatch:
 
@@ -14,7 +13,6 @@ jobs:
   search-jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,7 +23,12 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install anthropic
+        run: pip install anthropic gspread google-auth
+
+      - name: Write Google credentials to file
+        run: echo "$GOOGLE_SHEETS_CREDENTIALS" > /tmp/google_credentials.json
+        env:
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
 
       - name: Run job hunter
         env:
@@ -33,4 +36,6 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/google_credentials.json
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
         run: python job_hunter.py
