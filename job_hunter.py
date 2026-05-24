@@ -434,12 +434,20 @@ def build_email_html(jobs):
     job_cards = ""
     for job in jobs:
         score = job.get("match_score", 0)
+        unconfirmed_badge = ""
+        if job.get("verification_status") == "unconfirmed":
+            unconfirmed_badge = (
+                '<span style="margin-left:10px;background:#fef3c7;color:#92400e;'
+                'padding:2px 8px;border-radius:10px;font-weight:600;">'
+                '&#9888; Unconfirmed</span>'
+            )
         job_cards += f"""
         <tr>
           <td style="padding:20px;border-bottom:1px solid #e5e7eb;">
             <div style="font-size:12px;color:#6b7280;margin-bottom:5px;">
                 <span style="background:#f3f4f6;color:#1f2937;padding:2px 8px;border-radius:10px;font-weight:600;">{job.get('priority')}</span>
                 <span style="margin-left:10px;">Match: <strong style="color:{score_color(score)}">{score}%</strong></span>
+                {unconfirmed_badge}
             </div>
             <div style="font-size:18px;font-weight:700;color:#111827;">{job.get('title')}</div>
             <div style="font-size:15px;color:#4b5563;margin-bottom:10px;">{job.get('company')} — {job.get('location')}</div>
@@ -490,9 +498,13 @@ def main():
             print("[WARN] No new jobs found today.")
             return
 
-        # Verification step — drop fabricated/expired URLs before they reach
-        # the user's inbox or pollute the dedup memory in the Sheet.
-        jobs, verify_meta = verify.filter_verified(jobs, keep_unsure=True)
+        # Verification step. TESTING strict mode: keep_unsure=False drops any
+        # job the verifier couldn't fetch+confirm, so the inbox contains ONLY
+        # fully-verified live roles. The count of survivors tells us how many
+        # genuinely-verifiable openings the pipeline finds per run. Flip back to
+        # True to re-enable the "keep but tag ⚠ Unconfirmed" behaviour (the
+        # email badge code is already in place for that).
+        jobs, verify_meta = verify.filter_verified(jobs, keep_unsure=False)
 
         if not jobs:
             print("[WARN] All jobs failed verification — nothing to email.")
