@@ -498,13 +498,12 @@ def main():
             print("[WARN] No new jobs found today.")
             return
 
-        # Verification step. TESTING strict mode: keep_unsure=False drops any
-        # job the verifier couldn't fetch+confirm, so the inbox contains ONLY
-        # fully-verified live roles. The count of survivors tells us how many
-        # genuinely-verifiable openings the pipeline finds per run. Flip back to
-        # True to re-enable the "keep but tag ⚠ Unconfirmed" behaviour (the
-        # email badge code is already in place for that).
-        jobs, verify_meta = verify.filter_verified(jobs, keep_unsure=False)
+        # Verification step. keep_unsure=True: jobs the verifier couldn't
+        # fetch+confirm (anti-bot, timeout, ambiguous) are KEPT but tagged
+        # "unconfirmed" so the email badges them visibly. Confidently
+        # closed/expired/404 jobs are still dropped. An empty inbox (strict mode)
+        # is worse than a few flagged-uncertain roles, given thin search yield.
+        jobs, verify_meta = verify.filter_verified(jobs, keep_unsure=True)
 
         if not jobs:
             print("[WARN] All jobs failed verification — nothing to email.")
