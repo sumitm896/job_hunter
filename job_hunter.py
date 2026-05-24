@@ -271,7 +271,7 @@ def search_jobs():
                     "cache_control": {"type": "ephemeral"},
                 },
             ],
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
             messages=[
                 {
                     "role": "user",
@@ -279,10 +279,12 @@ def search_jobs():
                         job_count=5, query=query, excluded_fingerprints=excluded
                     ),
                 },
-                {
-                    "role": "assistant",
-                    "content": "[",  # Pre-fill to force JSON start
-                },
+                # NOTE: do NOT prefill an assistant turn here. With a server-side
+                # web_search tool, ending on a prefilled assistant message
+                # suppresses the tool-use loop — the model completes the JSON
+                # from context instead of actually searching (observed as
+                # searches=0 with fabricated results). Let the model run search,
+                # then parse its final text block.
             ],
         )
 
@@ -299,10 +301,14 @@ def search_jobs():
         if server_tool_use is not None:
             total_web_searches += getattr(server_tool_use, "web_search_requests", 0) or 0
 
-        full_text = "[" + "".join(
+        # With web_search active, response.content interleaves tool_use /
+        # tool_result / text blocks. The JSON answer is the FINAL text block;
+        # earlier blocks may be search narration. Parse the last one.
+        text_blocks = [
             block.text for block in response.content
-            if getattr(block, "type", "") == "text"
-        )
+            if getattr(block, "type", "") == "text" and getattr(block, "text", "").strip()
+        ]
+        full_text = text_blocks[-1] if text_blocks else ""
 
         jobs = parse_jobs(full_text)
 
