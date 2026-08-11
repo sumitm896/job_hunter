@@ -3,6 +3,12 @@ Daily Job Hunter — Automated job search using Claude API + Web Search.
 
 Finds TAM/adjacent roles in Ireland, scores them, deduplicates against
 recent history, emails results, and logs run metadata to Google Sheets.
+
+Two discovery lanes feed one digest:
+  Lane 1 (lane1.py)  — live roles pulled directly from target companies' ATS
+                       boards (fresh by construction, no verification needed).
+  Lane 2 (this file) — Claude web_search across all Ireland, verified by
+                       verify.py to drop expired/fake URLs.
 """
 
 import anthropic
@@ -15,8 +21,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timezone
 
-import sheet  # local module for Google Sheets I/O
+import sheet   # local module for Google Sheets I/O
 import verify  # local module for URL verification
+import lane1   # local module: Lane 1 ATS discovery + scoring
 
 # ── Configuration ──────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
@@ -234,7 +241,7 @@ def build_cached_context() -> str:
 # ── Core Logic ─────────────────────────────────────────────────────────────
 
 def search_jobs():
-    """Main search loop. Returns (jobs, run_metadata)."""
+    """Main search loop (Lane 2). Returns (jobs, run_metadata)."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     day_index = datetime.now(timezone.utc).weekday()
@@ -405,6 +412,9 @@ def parse_jobs(raw_text):
                 s = int(job.get("match_score", 0))
             except (ValueError, TypeError):
                 s = 0
+            # Normalise match_score to an int so downstream sorting/formatting
+            # never mixes str and int (previously could raise TypeError).
+            job["match_score"] = s
             job["priority"] = "HIGH" if s >= 85 else "MEDIUM" if s >= 75 else "LOW"
 
             cleaned.append(job)
@@ -490,40 +500,83 @@ def send_email(html_body, job_count):
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
+def _score_val(job):
+    """Safe int for sorting — handles match_score arriving as str or int."""
+    try:
+        return int(job.get("match_score", 0) or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
 def main():
     try:
-        jobs, metadata = search_jobs()
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
+        # ── Lane 2: web_search discovery (wide net, needs verification) ──
+        lane2_jobs, metadata = search_jobs()
+        if lane2_jobs:
+            # Verification step. keep_unsure=True: jobs the verifier couldn't
+            # fetch+confirm (anti-bot, timeout, ambiguous) are KEPT but tagged
+            # "unconfirmed" so the email badges them visibly. Confidently
+            # closed/expired/404 jobs are still dropped.
+            lane2_jobs, verify_meta = verify.filter_verified(lane2_jobs, keep_unsure=True)
+
+            # Roll verifier token usage into the run cost.
+            v_input = verify_meta.get("input_tokens", 0)
+            v_output = verify_meta.get("output_tokens", 0)
+            verify_cost_usd = (
+                v_input / 1_000_000 * PRICE_INPUT_PER_M
+                + v_output / 1_000_000 * PRICE_OUTPUT_PER_M
+            )
+            metadata["input_tokens"] += v_input
+            metadata["output_tokens"] += v_output
+            metadata["cost_eur"] += verify_cost_usd * USD_TO_EUR
+            metadata["jobs_verified_real"] = verify_meta.get("kept", 0)
+            metadata["jobs_verified_fake"] = verify_meta.get("fake_count", 0)
+            metadata["jobs_verified_unsure"] = verify_meta.get("unsure", 0)
+        else:
+            print("[WARN] Lane 2 (web_search) returned no jobs.")
+
+        # ── Lane 1: live ATS boards for target companies (fresh, no verify) ──
+        # Roles come straight from public ATS APIs, so they're live by
+        # construction — they skip verify.py entirely (tagged api-verified).
+        # detect_unknown defaults to False here: only the companies already
+        # cached to an API ATS in targets.yaml are fetched, so we don't re-probe
+        # the Firecrawl companies on every daily run.
+        try:
+            lane1_jobs = lane1.get_scored_jobs(
+                client, MODEL_ID, build_cached_context(),
+                targets_path="targets.yaml", min_score=MIN_MATCH_SCORE,
+            )
+        except Exception as e:
+            # Lane 1 must never take down the digest — Lane 2 still ships.
+            print(f"[WARN] Lane 1 failed, continuing with Lane 2 only: {e}")
+            lane1_jobs = []
+
+        # ── Dedup Lane 1 against the 14-day seen set and against Lane 2 ──
+        seen = sheet.read_seen_fingerprints(days=14)
+        lane2_fps = {
+            sheet.fingerprint(j.get("company", ""), j.get("title", ""))
+            for j in lane2_jobs
+        }
+        deduped_lane1 = []
+        for j in lane1_jobs:
+            fp = sheet.fingerprint(j.get("company", ""), j.get("title", ""))
+            if fp not in seen and fp not in lane2_fps:
+                deduped_lane1.append(j)
+        if len(deduped_lane1) != len(lane1_jobs):
+            print(f"[INFO] Lane 1 dedup dropped {len(lane1_jobs) - len(deduped_lane1)} job(s).")
+
+        # ── Merge, sort, email ──
+        jobs = lane2_jobs + deduped_lane1
         if not jobs:
-            print("[WARN] No new jobs found today.")
+            print("[WARN] No jobs to email today.")
             return
 
-        # Verification step. keep_unsure=True: jobs the verifier couldn't
-        # fetch+confirm (anti-bot, timeout, ambiguous) are KEPT but tagged
-        # "unconfirmed" so the email badges them visibly. Confidently
-        # closed/expired/404 jobs are still dropped. An empty inbox (strict mode)
-        # is worse than a few flagged-uncertain roles, given thin search yield.
-        jobs, verify_meta = verify.filter_verified(jobs, keep_unsure=True)
+        metadata["lane1_jobs"] = len(deduped_lane1)
+        metadata["lane2_jobs"] = len(lane2_jobs)
 
-        if not jobs:
-            print("[WARN] All jobs failed verification — nothing to email.")
-            return
-
-        # Roll verifier token usage into the run cost.
-        v_input = verify_meta.get("input_tokens", 0)
-        v_output = verify_meta.get("output_tokens", 0)
-        verify_cost_usd = (
-            v_input / 1_000_000 * PRICE_INPUT_PER_M
-            + v_output / 1_000_000 * PRICE_OUTPUT_PER_M
-        )
-        metadata["input_tokens"] += v_input
-        metadata["output_tokens"] += v_output
-        metadata["cost_eur"] += verify_cost_usd * USD_TO_EUR
-        metadata["jobs_verified_real"] = verify_meta.get("kept", 0)
-        metadata["jobs_verified_fake"] = verify_meta.get("fake_count", 0)
-        metadata["jobs_verified_unsure"] = verify_meta.get("unsure", 0)
-
-        jobs.sort(key=lambda x: x.get("match_score", 0), reverse=True)
+        jobs.sort(key=_score_val, reverse=True)
 
         html = build_email_html(jobs)
         send_email(html, len(jobs))
@@ -533,7 +586,10 @@ def main():
         sheet.append_seen_jobs(jobs)
         sheet.append_daily_log(jobs, metadata)
 
-        print(f"Workflow finished successfully. Sent {len(jobs)} verified jobs.")
+        print(
+            f"Workflow finished successfully. Sent {len(jobs)} jobs "
+            f"(lane1={len(deduped_lane1)}, lane2={len(lane2_jobs)})."
+        )
 
     except Exception as e:
         print(f"[FATAL ERROR] {e}")
