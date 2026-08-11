@@ -1,0 +1,319 @@
+# targets.yaml — Lane 1 target companies for the job-hunter pipeline
+#
+# Ordered by how directly Sumit's edge transfers:
+#   ITSM/Freshservice support engineering + IAM/SSO + API/webhook troubleshooting.
+#
+# HOW LANE 1 USES THIS FILE
+#   For each company the pipeline resolves `ats` + `board_id` and pulls LIVE reqs:
+#     - greenhouse | lever | ashby | smartrecruiters | workable  -> clean JSON API, no scraping
+#     - workday | taleo | successfactors | icims | custom        -> Firecrawl /crawl (no clean API / bot-walled)
+#   Because a board only lists currently-open roles, everything Lane 1 returns is fresh by construction.
+#
+# ONE-TIME SETUP PER COMPANY (the only manual step)
+#   Open the careers page, click "apply" on any role, and watch the URL:
+#     boards.greenhouse.io/{token}      -> ats: greenhouse, board_id: {token}
+#     jobs.lever.co/{slug}              -> ats: lever,      board_id: {slug}
+#     jobs.ashbyhq.com/{slug}           -> ats: ashby,      board_id: {slug}
+#     *.myworkdayjobs.com/...           -> ats: workday,    board_id: {tenant/site}  (Firecrawl lane)
+#     anything bespoke / no clean board -> ats: custom,     careers_url set          (Firecrawl lane)
+#
+# status:  target | applied | in_play | contact   (in_play/applied/contact carry existing momentum)
+# ats/board_id "TBD" = detect once, then it runs forever.
+
+meta:
+  owner: Sumit Mishra
+  location_filter: ["Ireland", "Ireland-remote", "Dublin", "Galway", "Cork"]
+  review_cadence: quarterly
+  last_updated: 2026-08-06
+
+companies:
+
+  # ── Tier 1 — ITSM / service-management / support engineering (most direct) ──
+  - name: Freshworks
+    tier: 1
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Ex-employer (Freshservice/Freshdesk). Boomerang into TAM-ITSM = easiest fit to argue.
+  - name: ServiceNow
+    tier: 1
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: ITSM heavyweight, Dublin office. ITIL experience maps straight over.
+  - name: Atlassian
+    tier: 1
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Jira Service Management is ITSM. Strong Dublin presence.
+  - name: Zendesk
+    tier: 1
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Dublin TSE spec (SAML/JWT, REST, JSON, multi-vendor SaaS) reads like the CV.
+  - name: Command|Link
+    tier: 1
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Global SaaS with explicit ITSM angle. Hires TAM.
+
+  # ── Tier 2 — Identity / security (IAM/SSO/SAML/SCIM is a differentiator here) ──
+  - name: Okta
+    tier: 2
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Dublin hub. Near-perfect stack match.
+  - name: One Identity
+    tier: 2
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: IAM/governance. On the earlier target list for good reason.
+  - name: Daon
+    tier: 2
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Irish identity/biometrics. Home-market advantage.
+  - name: Tines
+    tier: 2
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Dublin-HQ security automation. API/integration-heavy.
+  - name: Expel
+    tier: 2
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Security/MDR. Support-engineering and customer-facing roles.
+  - name: TitanHQ
+    tier: 2
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Email/web security, GALWAY-based. Local — worth a direct approach.
+  - name: AppOmni
+    tier: 2
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: SaaS security connecting across Okta/ServiceNow/Workday APIs.
+  - name: McKesson
+    tier: 2
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: contact
+    notes: Had an IAM Engineer recruiter reach-out (Cork). Keep warm.
+  - name: Workday
+    tier: 2
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Dublin EMEA hub. Identity/provisioning + implementation roles. (Likely Firecrawl lane.)
+
+  # ── Tier 3 — Developer / API / observability / data platforms ──
+  - name: Datadog
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Actively hiring TAM EMEA in Dublin. Observability ties to log/error root-causing.
+  - name: New Relic
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Observability. Same fit logic as Datadog.
+  - name: MongoDB
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Dublin CS/ops. Developer- and API-facing.
+  - name: Snowflake
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Hands-on Snowflake experience = real talking point.
+  - name: Fivetran
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Data-integration platform. Dublin customer-facing roles.
+  - name: Cloudera
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Data platform. Enterprise technical-relationship roles.
+  - name: Intercom
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Dublin-HQ AI customer-service platform (Fin). API-heavy.
+  - name: HubSpot
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Hiring Solutions Engineers in Dublin.
+  - name: Salesforce
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Large Dublin Customer Success / Success Architect org.
+  - name: Chargebee
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: applied
+    notes: Subscription-billing SaaS. Integration/API-led (SaaS ops, not finance domain).
+  - name: Stripe
+    tier: 3
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: in_play
+    notes: Anchor account — warm contacts across Stripe. Applied to Metronome (now Stripe), developer-facing API/SQL support.
+
+  # ── Tier 4 — Broad enterprise SaaS, TAM/CSM transferable (incl. live applications) ──
+  - name: Asana
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: in_play
+    notes: Solutions Engineer, Command by Asana. (Warm contact Tom O'Leary from earlier.)
+  - name: Circit
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: in_play
+    notes: Mid-tier CSM. Already completed their technical assessment. Applies via LinkedIn Easy Apply — may not expose a clean board.
+  - name: Harvey
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: applied
+    notes: Weekend-coverage TAM, legal AI. Strongest title match.
+  - name: Omni Analytics
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: in_play
+    notes: Product Expert, Customer Support (Dublin). Contact Dave (lead product expert).
+  - name: Rippling
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Dublin SaaS account-management/CSM.
+  - name: Pluralsight
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Dublin customer success.
+  - name: Nitro
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Dublin Enterprise CSM.
+  - name: Clio
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Legal-tech SaaS CSM, Dublin.
+  - name: Workhuman
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: HR-tech SaaS, Dublin.
+  - name: Altra
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Care-operations platform, Dublin customer success.
+  - name: Kota
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Benefits/insurance-tech SaaS, Dublin. Platform/API angle.
+  - name: Ashby
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Recruiting-software SaaS. Developer/API-adjacent, remote-friendly.
+  - name: Absorb Software
+    tier: 4
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: applied
+    notes: LMS SaaS. Implementation/CSM.
+
+  # ── Tier 5 — Fintech, secondary (target support/integration roles, not finance-domain) ──
+  - name: Mastercard
+    tier: 5
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Sizeable Customer Success & Experience function in the Dublin tech hub.
+  - name: Engine by Starling
+    tier: 5
+    ats: TBD
+    board_id: TBD
+    careers_url: TBD
+    status: target
+    notes: Core-banking SaaS (Solution Architect JD shared). Finance domain, but role is systems/integration.
