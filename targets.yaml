@@ -277,8 +277,8 @@ companies:
   notes: Legal-tech SaaS CSM, Dublin.
 - name: Workhuman
   tier: 4
-  ats: custom
-  board_id: n/a
+  ats: ashby
+  board_id: workhuman
   careers_url: TBD
   status: target
   notes: HR-tech SaaS, Dublin.
