@@ -2,7 +2,8 @@
 
 Automated job search powered by the **Claude API + web search**. Runs daily on **GitHub Actions** and emails a scored, prioritized HTML digest straight to your inbox — no servers, no manual steps.
 
-![Pipeline architecture](pipeline.png)
+<img width="1240" height="430" alt="pipeline (1)" src="https://github.com/user-attachments/assets/42f8b09c-5164-45fe-ada5-d0adac7ab9d4" />
+
 
 ## What it does
 
