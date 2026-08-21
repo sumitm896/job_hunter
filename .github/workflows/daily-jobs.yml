@@ -41,4 +41,5 @@ jobs:
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/google_credentials.json
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
         run: python job_hunter.py
